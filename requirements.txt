@@ -220,7 +220,7 @@ traitlets==5.14.3
 # Triton - устанавливается вместе с PyTorch
 # triton==3.3.0
 types-python-dateutil==2.9.0.20250516
-typing_extensions==4.13.2
+typing_extensions>=4.15.0
 tzdata==2025.2
 # YOLO object detection (уже установлен в основном venv с CUDA)
 ultralytics==8.3.228
