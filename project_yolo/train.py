@@ -2,6 +2,10 @@
 """
 Advanced YOLOv8 training script with CUDA support, automatic batch sizing,
 EMA, early stopping, and comprehensive logging.
+
+ПРИМЕЧАНИЕ: В настоящее время обучение моделей не выполняется.
+Текущая продакшн-модель: training_results/run_default_15ep2/weights/best.pt
+Этот скрипт сохранен для будущего использования при необходимости обучения новых моделей.
 """
 
 import argparse

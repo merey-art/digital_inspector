@@ -1,13 +1,14 @@
 #!/bin/bash
-# Скрипт для использования текущей модели (last.pt) во время обучения
+# Скрипт для запуска backend с лучшей моделью (best.pt)
+# Используется продакшн-модель: run_default_15ep2/weights/best.pt
 
 cd "$(dirname "$0")"
 
-# Используем last.pt (последний чекпоинт) вместо best.pt
-export MODEL_PATH="$(pwd)/training_results/run_default_15ep2/weights/last.pt"
+# Используем best.pt (лучшая модель) - продакшн-модель
+export MODEL_PATH="$(pwd)/training_results/run_default_15ep2/weights/best.pt"
 
-echo "Используется модель: $MODEL_PATH"
-echo "Запуск backend с текущей моделью..."
+echo "Используется продакшн-модель: $MODEL_PATH"
+echo "Запуск backend..."
 
 source venv/bin/activate
 cd backend

@@ -54,6 +54,9 @@ app.add_middleware(
 )
 
 # Глобальные переменные
+# ВАЖНО: Используется лучшая модель run_default_15ep2 (best.pt)
+# Эта модель показала наилучшие результаты и используется в продакшене
+# Для изменения модели используйте переменную окружения MODEL_PATH
 MODEL_PATH = os.getenv(
     "MODEL_PATH",
     str(Path(__file__).parent.parent / "training_results" / "run_default_15ep2" / "weights" / "best.pt")
