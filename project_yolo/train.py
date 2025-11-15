@@ -204,9 +204,48 @@ def train(args):
     backbone = args.backbone or 'yolov8s.pt'
     logger.info(f"Loading model: {backbone}")
     
-    if args.resume and Path(args.resume).exists():
-        logger.info(f"Resuming from checkpoint: {args.resume}")
-        model = YOLO(args.resume)
+    # Check if resuming from checkpoint
+    is_resuming = args.resume and Path(args.resume).exists()
+    
+    if is_resuming:
+        # Check if training was completed in the checkpoint
+        # If training is finished, we need to start new training with these weights
+        # instead of resuming (which would fail)
+        training_completed = False
+        try:
+            import torch
+            ckpt = torch.load(args.resume, map_location='cpu', weights_only=False)
+            ckpt_epoch = ckpt.get('epoch', -1)
+            ckpt_epochs = ckpt.get('epochs', -1)
+            ckpt_optimizer = ckpt.get('optimizer')
+            
+            # Check if we can resume (need valid epoch info and optimizer state)
+            if ckpt_epoch >= 0 and ckpt_epochs >= 0 and ckpt_optimizer is not None:
+                if ckpt_epoch >= ckpt_epochs:
+                    logger.warning(f"Checkpoint shows training completed ({ckpt_epoch}/{ckpt_epochs} epochs)")
+                    logger.info("Will start new training with checkpoint weights (not resuming)")
+                    training_completed = True
+                else:
+                    logger.info(f"Checkpoint shows training in progress ({ckpt_epoch}/{ckpt_epochs} epochs)")
+                    logger.info("Will resume training from checkpoint epoch")
+            else:
+                # If epoch info is missing or optimizer is None, treat as completed training
+                logger.warning("Checkpoint missing resume information (epoch/optimizer)")
+                logger.info("Will start new training with checkpoint weights (not resuming)")
+                training_completed = True
+        except Exception as e:
+            logger.warning(f"Could not check checkpoint status: {e}")
+            logger.info("Will attempt to resume training")
+        
+        if training_completed:
+            # For completed training, load as backbone (weights only, no resume)
+            logger.info(f"Loading model weights from checkpoint: {args.resume}")
+            model = YOLO(args.resume)
+            is_resuming = False  # Don't use resume mode
+        else:
+            # For incomplete training, load for resume
+            logger.info(f"Loading model from checkpoint for resume: {args.resume}")
+            model = YOLO(args.resume)
     else:
         model = YOLO(backbone)
     
@@ -235,6 +274,14 @@ def train(args):
         'plots': True,
         'verbose': True,
     }
+    
+    # IMPORTANT: Set resume=True only if training was not completed
+    # If training is finished, we start new training with checkpoint weights
+    if is_resuming:
+        train_args['resume'] = True
+        logger.info("Resume mode enabled: training will continue from checkpoint epoch")
+    elif args.resume and Path(args.resume).exists():
+        logger.info("Starting new training with checkpoint weights (training will begin from epoch 0)")
     
     # Увеличение веса classification loss для несбалансированных классов
     # Датасет: stamp 90.7%, signature 5.1%, QR-Code 4.2%
