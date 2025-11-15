@@ -57,7 +57,7 @@ Thumbs.db
 # Environment variables
 .env
 .env.local
-
+./project_yolo/training_results/
 extracted/
 merged_dataset/
 
