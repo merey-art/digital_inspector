@@ -43,8 +43,6 @@ Thumbs.db
 *.onnx
 *.weights
 
-# Training results (можно добавить позже через git lfs)
-training_results/
 *.log
 
 # Temporary files
@@ -60,8 +58,6 @@ training_results/
 .env
 .env.local
 
-# Dataset files (большие)
-*.zip
 extracted/
 merged_dataset/
 
