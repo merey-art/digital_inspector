@@ -64,6 +64,11 @@ merged_dataset/
 # PDF files (если большие)
 *.pdf
 
+# Large dataset ZIP files
+*.zip
+QR code.v1i.yolov8-obb.zip
+IDP_stamp_signature_detection.v1i.yolov8-obb.zip
+
 # Cache
 *.cache
 .cache/
