@@ -1,0 +1,17 @@
+# YOLOv8 Model Configuration
+# Specify pretrained model weights or architecture
+
+# Pretrained model options:
+# - yolov8n.pt (nano)
+# - yolov8s.pt (small) - default
+# - yolov8m.pt (medium)
+# - yolov8l.pt (large)
+# - yolov8x.pt (xlarge)
+
+pretrained: yolov8s.pt
+
+# Model architecture (if training from scratch)
+# nc: 3  # number of classes (will be overridden by dataset.yaml)
+# depth_multiple: 0.33
+# width_multiple: 0.50
+
