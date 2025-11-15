@@ -278,6 +278,64 @@ npx http-server -p 8080
 
 **Важно**: Убедитесь, что Backend API запущен на порту 8000, иначе измените `API_URL` в `frontend/index.html` (строка 346).
 
+### Запуск через Docker (рекомендуется для продакшена)
+
+Для быстрого развертывания и изоляции окружения используйте Docker:
+
+#### Сборка образа
+
+```bash
+docker build -t digital-inspector .
+```
+
+#### Запуск контейнера
+
+**Без GPU (CPU режим):**
+```bash
+docker run -d -p 8000:8000 -p 8080:8080 --name digital-inspector digital-inspector
+```
+
+**С GPU поддержкой:**
+```bash
+docker run -d -p 8000:8000 -p 8080:8080 --gpus all --name digital-inspector digital-inspector
+```
+
+**Если порты 8000/8080 заняты, используйте другие:**
+```bash
+docker run -d -p 8001:8000 -p 8081:8080 --name digital-inspector digital-inspector
+```
+
+После запуска:
+- **Backend API**: http://localhost:8000 (или 8001)
+- **Frontend**: http://localhost:8080 (или 8081)
+- **API Docs**: http://localhost:8000/docs
+
+#### Управление контейнером
+
+```bash
+# Просмотр логов
+docker logs digital-inspector
+
+# Остановка контейнера
+docker stop digital-inspector
+
+# Запуск остановленного контейнера
+docker start digital-inspector
+
+# Удаление контейнера
+docker rm -f digital-inspector
+```
+
+**Примечание**: Для GPU поддержки убедитесь, что установлен `nvidia-container-toolkit`:
+```bash
+# Ubuntu/Debian
+distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
+curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
+curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | sudo tee /etc/apt/sources.list.d/nvidia-docker.list
+sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+sudo systemctl restart docker
+```
+
 ### Проверка работоспособности
 
 ```bash

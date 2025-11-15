@@ -343,7 +343,17 @@
     </div>
 
     <script>
-        const API_URL = 'http://localhost:8000';
+        // Автоматическое определение порта API на основе текущего порта frontend
+        const currentPort = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+        // Маппинг портов: frontend порт -> backend порт
+        const portMapping = {
+            '8081': '8001',
+            '8080': '8000',
+            '': '8000'  // для случая, когда порт не указан (стандартный HTTP)
+        };
+        const apiPort = portMapping[currentPort] || '8000';
+        const API_URL = `${window.location.protocol}//${window.location.hostname}:${apiPort}`;
+        console.log('Frontend port:', currentPort, '-> API port:', apiPort, 'API_URL:', API_URL);
         const uploadSection = document.getElementById('uploadSection');
         const fileInput = document.getElementById('fileInput');
         const loading = document.getElementById('loading');
@@ -424,7 +434,10 @@
                 const data = await response.json();
                 displayResults(data, file);
             } catch (error) {
-                showError(error.message);
+                console.error('API Error:', error);
+                console.error('API_URL:', API_URL);
+                const errorMsg = error.message || 'Неизвестная ошибка';
+                showError(`Ошибка: ${errorMsg}. Проверьте, что Backend API доступен по адресу ${API_URL}`);
             } finally {
                 loading.classList.remove('active');
             }
@@ -471,21 +484,48 @@
                     // Рисуем аннотации
                     if (annotations && annotations.length > 0) {
                         console.log('Drawing', annotations.length, 'annotations');
-                        annotations.forEach((annObj, idx) => {
-                            const annId = Object.keys(annObj)[0];
-                            const ann = annObj[annId];
-                            const bbox = ann.bbox;
-                            const category = ann.category;
+                        annotations.forEach((ann, idx) => {
+                            // Поддержка двух форматов: новый (объект с полями) и старый (объект с ключами)
+                            let bbox, category, confidence;
+                            
+                            if (ann.bbox && ann.category) {
+                                // Новый формат: {category, confidence, bbox}
+                                bbox = ann.bbox;
+                                category = ann.category;
+                                confidence = ann.confidence || 0;
+                            } else {
+                                // Старый формат: {annId: {bbox, category, ...}}
+                                const annId = Object.keys(ann)[0];
+                                const annData = ann[annId];
+                                bbox = annData.bbox;
+                                category = annData.category;
+                                confidence = annData.confidence || 0;
+                            }
+                            
+                            if (!bbox || !category) {
+                                console.warn('Invalid annotation format:', ann);
+                                return;
+                            }
                             
                             const color = colors[category] || '#000000';
                             
-                            // Масштабируем координаты
-                            const x = bbox.x * scaleX;
-                            const y = bbox.y * scaleY;
-                            const width = bbox.width * scaleX;
-                            const height = bbox.height * scaleY;
+                            // Масштабируем координаты (bbox может быть в формате x1,y1,x2,y2 или x,y,width,height)
+                            let x, y, width, height;
+                            if (bbox.x1 !== undefined) {
+                                // Формат x1, y1, x2, y2
+                                x = bbox.x1 * scaleX;
+                                y = bbox.y1 * scaleY;
+                                width = (bbox.x2 - bbox.x1) * scaleX;
+                                height = (bbox.y2 - bbox.y1) * scaleY;
+                            } else {
+                                // Формат x, y, width, height
+                                x = (bbox.x || 0) * scaleX;
+                                y = (bbox.y || 0) * scaleY;
+                                width = (bbox.width || 0) * scaleX;
+                                height = (bbox.height || 0) * scaleY;
+                            }
                             
-                            console.log(`Annotation ${idx}:`, category, {x, y, width, height});
+                            console.log(`Annotation ${idx}:`, category, {x, y, width, height}, 'confidence:', confidence);
                             
                             // Рисуем прямоугольник
                             ctx.strokeStyle = color;
@@ -493,7 +533,7 @@
                             ctx.strokeRect(x, y, width, height);
                             
                             // Рисуем фон для текста
-                            const label = category;
+                            const label = `${category} (${(confidence * 100).toFixed(0)}%)`;
                             const fontSize = 16;
                             ctx.font = `${fontSize}px Arial`;
                             const textWidth = ctx.measureText(label).width;
@@ -569,44 +609,54 @@
             console.log('displayResults called with data:', data);
             console.log('originalFile:', originalFile.name, originalFile.type);
             
-            // Новый формат: {filename: {page_1: {annotations: [...], page_size: {...}, annotated_image: "..."}}}
-            const filename = Object.keys(data)[0];
-            if (!filename) {
-                showError('Неверный формат ответа от сервера');
+            // Формат API: {success, detections, num_detections, image_size, annotated_image, pdf_info, pages}
+            if (!data.success) {
+                showError('Ошибка обработки: ' + (data.error || 'Неизвестная ошибка'));
                 return;
             }
 
-            const fileData = data[filename];
-            const pageKeys = Object.keys(fileData).filter(key => key.startsWith('page_'));
-            const isPdf = originalFile.type === 'application/pdf' || originalFile.name.toLowerCase().endsWith('.pdf');
+            const isPdf = data.pdf_info && data.pdf_info.is_pdf;
+            const hasMultiplePages = data.pages && data.pages.length > 1;
             
-            console.log('File data keys:', pageKeys);
-            console.log('Is PDF:', isPdf);
+            console.log('Is PDF:', isPdf, 'Has multiple pages:', hasMultiplePages);
+            console.log('Detections:', data.num_detections);
             
-            if (pageKeys.length > 1 && isPdf) {
+            // Показываем результаты
+            results.style.display = 'block';
+            
+            if (hasMultiplePages && isPdf) {
                 // PDF с несколькими страницами - загружаем страницы PDF
                 loading.classList.add('active');
                 
                 try {
                     const pdfImagesData = await loadPdfPages(originalFile);
                     
-                    pdfPagesData = await Promise.all(pageKeys.map(async (pageKey, index) => {
-                        const pageData = fileData[pageKey];
-                        const pageNum = parseInt(pageKey.replace('page_', '')) - 1; // page_1 -> 0
-                        
-                        // Рисуем аннотации на странице PDF
-                        const pdfPageImage = pdfImagesData[pageNum];
-                        const annotatedImage = await drawAnnotationsOnImage(
-                            pdfPageImage,
-                            pageData.annotations || [],
-                            pageData.page_size || {width: 0, height: 0}
-                        );
+                    // Используем данные из API response.pages
+                    pdfPagesData = await Promise.all(data.pages.map(async (page, index) => {
+                        // Используем annotated_image из API, если есть, иначе рисуем сами
+                        let annotatedImage = page.annotated_image;
+                        if (!annotatedImage && pdfImagesData[index]) {
+                            // Конвертируем detections в формат для drawAnnotationsOnImage
+                            const annotations = page.detections.map(d => ({
+                                category: d.class_name,
+                                bbox: d.bbox
+                            }));
+                            annotatedImage = await drawAnnotationsOnImage(
+                                pdfImagesData[index],
+                                annotations,
+                                page.image_size
+                            );
+                        }
                         
                         return {
-                            page_number: pageNum,
-                            annotations: pageData.annotations || [],
-                            page_size: pageData.page_size || {width: 0, height: 0},
-                            annotated_image: annotatedImage
+                            page_number: page.page_number - 1, // API использует 1-based, мы 0-based
+                            annotations: page.detections.map(d => ({
+                                category: d.class_name,
+                                confidence: d.confidence,
+                                bbox: d.bbox
+                            })),
+                            page_size: page.image_size,
+                            annotated_image: annotatedImage || pdfImagesData[index]
                         };
                     }));
                     
@@ -643,58 +693,71 @@
                 pdfPagesData = null;
                 pdfNavigation.style.display = 'none';
                 
-                const pageKey = pageKeys[0] || 'page_1';
-                const pageData = fileData[pageKey];
-                const annotations = pageData.annotations || [];
-                const pageSize = pageData.page_size || {width: 0, height: 0};
+                // Используем данные из API
+                const detections = data.detections || [];
+                const annotations = detections.map(d => ({
+                    category: d.class_name,
+                    confidence: d.confidence,
+                    bbox: d.bbox
+                }));
+                const pageSize = data.image_size || {width: 0, height: 0};
                 
                 // Отображение статистики
                 stats.innerHTML = `
                     <div class="stat-card">
-                        <div class="stat-value">${annotations.length}</div>
+                        <div class="stat-value">${data.num_detections}</div>
                         <div class="stat-label">Найдено объектов</div>
                     </div>
                     <div class="stat-card">
                         <div class="stat-value">${pageSize.width}×${pageSize.height}</div>
                         <div class="stat-label">Размер изображения</div>
                     </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${(data.inference_time || 0).toFixed(2)}s</div>
+                        <div class="stat-label">Время обработки</div>
+                    </div>
                 `;
 
-                // Рисуем аннотации на оригинальном файле
-                if (isPdf) {
-                    // Для PDF используем loadPdfPages
-                    loading.classList.add('active');
-                    try {
-                        const pdfImagesData = await loadPdfPages(originalFile);
-                        const annotatedImageSrc = await drawAnnotationsOnImage(pdfImagesData[0], annotations, pageSize);
-                        resultImage.src = annotatedImageSrc;
-                        loading.classList.remove('active');
-                    } catch (error) {
-                        loading.classList.remove('active');
-                        console.error('Error processing PDF:', error);
-                        showError('Ошибка при обработке PDF: ' + error.message);
-                    }
+                // Используем annotated_image из API, если есть
+                if (data.annotated_image) {
+                    resultImage.src = data.annotated_image.startsWith('data:') 
+                        ? data.annotated_image 
+                        : `data:image/jpeg;base64,${data.annotated_image}`;
                 } else {
-                    // Для обычных изображений используем FileReader
-                    const reader = new FileReader();
-                    reader.onload = async (e) => {
+                    // Если нет annotated_image, рисуем сами
+                    if (isPdf) {
+                        // Для PDF используем loadPdfPages
+                        loading.classList.add('active');
                         try {
-                            const annotatedImageSrc = await drawAnnotationsOnImage(e.target.result, annotations, pageSize);
+                            const pdfImagesData = await loadPdfPages(originalFile);
+                            const annotatedImageSrc = await drawAnnotationsOnImage(pdfImagesData[0], annotations, pageSize);
                             resultImage.src = annotatedImageSrc;
+                            loading.classList.remove('active');
                         } catch (error) {
-                            console.error('Error drawing annotations:', error);
-                            showError('Ошибка при отображении аннотаций');
-                            resultImage.src = e.target.result;
+                            loading.classList.remove('active');
+                            console.error('Error processing PDF:', error);
+                            showError('Ошибка при обработке PDF: ' + error.message);
                         }
-                    };
-                    reader.readAsDataURL(originalFile);
+                    } else {
+                        // Для обычных изображений используем FileReader
+                        const reader = new FileReader();
+                        reader.onload = async (e) => {
+                            try {
+                                const annotatedImageSrc = await drawAnnotationsOnImage(e.target.result, annotations, pageSize);
+                                resultImage.src = annotatedImageSrc;
+                            } catch (error) {
+                                console.error('Error drawing annotations:', error);
+                                showError('Ошибка при отображении аннотаций');
+                                resultImage.src = e.target.result;
+                            }
+                        };
+                        reader.readAsDataURL(originalFile);
+                    }
                 }
 
                 // Отображение списка детекций
                 displayDetectionsList(annotations);
             }
-
-            results.style.display = 'block';
         }
         
         function displayPage(pageIndex) {
@@ -726,23 +789,57 @@
             if (!annotations || annotations.length === 0) {
                 detectionsList.innerHTML = '<p style="text-align: center; color: #666; padding: 20px;">Объекты не обнаружены</p>';
             } else {
-                annotations.forEach((annObj, index) => {
-                    const annId = Object.keys(annObj)[0];
-                    const ann = annObj[annId];
-                    const category = ann.category;
-                    const bbox = ann.bbox;
-                    const area = ann.area;
+                annotations.forEach((ann, index) => {
+                    // Поддержка двух форматов: новый (объект с полями) и старый (объект с ключами)
+                    let bbox, category, confidence;
+                    
+                    if (ann.bbox && ann.category) {
+                        // Новый формат: {category, confidence, bbox}
+                        bbox = ann.bbox;
+                        category = ann.category;
+                        confidence = ann.confidence || 0;
+                    } else {
+                        // Старый формат: {annId: {bbox, category, ...}}
+                        const annId = Object.keys(ann)[0];
+                        const annData = ann[annId];
+                        bbox = annData.bbox;
+                        category = annData.category;
+                        confidence = annData.confidence || 0;
+                    }
+                    
+                    if (!bbox || !category) {
+                        console.warn('Invalid annotation format:', ann);
+                        return;
+                    }
+                    
+                    // Вычисляем позицию и размер
+                    let x, y, width, height, area;
+                    if (bbox.x1 !== undefined) {
+                        // Формат x1, y1, x2, y2
+                        x = bbox.x1;
+                        y = bbox.y1;
+                        width = bbox.x2 - bbox.x1;
+                        height = bbox.y2 - bbox.y1;
+                        area = width * height;
+                    } else {
+                        // Формат x, y, width, height
+                        x = bbox.x || 0;
+                        y = bbox.y || 0;
+                        width = bbox.width || 0;
+                        height = bbox.height || 0;
+                        area = width * height;
+                    }
                     
                     const item = document.createElement('div');
                     item.className = `detection-item ${category.toLowerCase().replace('_', '-')}`;
                     item.innerHTML = `
                         <div class="detection-header">
                             <span class="detection-class">${category}</span>
-                            <span class="detection-id">${annId}</span>
+                            <span class="detection-confidence">${(confidence * 100).toFixed(1)}%</span>
                         </div>
                         <div class="detection-bbox">
-                            Позиция: (${Math.round(bbox.x)}, ${Math.round(bbox.y)})<br>
-                            Размер: ${Math.round(bbox.width)} × ${Math.round(bbox.height)} px<br>
+                            Позиция: (${Math.round(x)}, ${Math.round(y)})<br>
+                            Размер: ${Math.round(width)} × ${Math.round(height)} px<br>
                             Площадь: ${Math.round(area)} px²
                         </div>
                     `;
@@ -786,14 +883,22 @@
 
         // Проверка здоровья API при загрузке
         fetch(`${API_URL}/health`)
-            .then(res => res.json())
+            .then(res => {
+                if (!res.ok) {
+                    throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+                }
+                return res.json();
+            })
             .then(data => {
+                console.log('Backend health check OK:', data);
                 if (!data.model_loaded) {
                     showError('Модель не загружена. Проверьте путь к модели.');
                 }
             })
-            .catch(() => {
-                showError('Не удалось подключиться к API. Убедитесь, что сервер запущен на порту 8000.');
+            .catch((err) => {
+                console.error('Health check failed:', err);
+                console.error('API_URL:', API_URL);
+                showError(`Не удалось подключиться к Backend API (${API_URL}). Убедитесь, что сервер запущен.`);
             });
     </script>
 </body>

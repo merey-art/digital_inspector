@@ -1,0 +1,93 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+backend/venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+/tmp/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Environment variables
+.env
+.env.local
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+README.md
+Case*.pdf
+
+# Large dataset files
+extracted/
+merged_dataset/
+*.zip
+
+# Cache
+*.cache
+.cache/
+
+# Training scripts (not needed in production)
+project_yolo/
+visualize_training.py
+merge_zip_datasets.py
+
+# Visualizations
+visualizations/
+
+# Scripts
+start.sh
+use_current_model.sh
+!docker-entrypoint.sh
+
+# Model files that are not the production model
+*.pt
+*.pth
+*.onnx
+*.weights
+!training_results/run_default_15ep2/weights/best.pt
