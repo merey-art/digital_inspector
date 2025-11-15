@@ -324,7 +324,8 @@ def main():
                        default='training_results/run_default_15ep2/results.csv',
                        help='Путь к CSV файлу с результатами')
     parser.add_argument('--output', type=str, 
-                       help='Директория для сохранения графиков (по умолчанию - та же, где CSV)')
+                       default='visualizations/training',
+                       help='Директория для сохранения графиков (по умолчанию: visualizations/training)')
     parser.add_argument('--no-smooth', action='store_true',
                        help='Отключить сглаживание графиков')
     parser.add_argument('--all', action='store_true',
@@ -333,10 +334,7 @@ def main():
     args = parser.parse_args()
     
     csv_path = Path(args.csv)
-    if args.output:
-        output_dir = Path(args.output)
-    else:
-        output_dir = csv_path.parent
+    output_dir = Path(args.output)
     
     output_dir.mkdir(parents=True, exist_ok=True)
     
