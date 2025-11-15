@@ -102,6 +102,8 @@ digital_inspector/
 ├── merge_zip_datasets.py       # Скрипт объединения датасетов
 ├── use_current_model.sh        # Скрипт использования текущей модели
 └── README.md                   # Этот файл
+так же дата сеты которые мы юзали
+https://drive.google.com/file/d/17-eNmV1cfs8wwWJR89aVrm0s0pHKiYmg/view?usp=sharing, https://drive.google.com/file/d/1lp-34vRkM8LpRTJFDRNlb62w7_lk6-94/view?usp=sharing
 ```
 
 ## 🔧 Требования
