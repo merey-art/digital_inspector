@@ -310,24 +310,6 @@
 
             <div class="settings">
                 <div class="setting-item">
-                    <label for="confThreshold">Порог уверенности</label>
-                    <input type="number" id="confThreshold" min="0" max="1" step="0.05" value="0.25">
-                </div>
-                <div class="setting-item">
-                    <label for="iouThreshold">Порог IoU</label>
-                    <input type="number" id="iouThreshold" min="0" max="1" step="0.05" value="0.45">
-                </div>
-                <div class="setting-item">
-                    <label for="maxDet">Макс. детекций</label>
-                    <input type="number" id="maxDet" min="1" max="1000" value="300">
-                </div>
-                <div class="setting-item">
-                    <label>
-                        <input type="checkbox" id="agnosticNms">
-                        Подавлять overlapping детекции
-                    </label>
-                </div>
-                <div class="setting-item">
                     <label for="pdfPage">PDF страница (-1 = все страницы)</label>
                     <input type="number" id="pdfPage" min="-1" value="-1" title="-1 = обработать все страницы, 0+ = конкретная страница">
                 </div>
@@ -417,10 +399,11 @@
 
             const formData = new FormData();
             formData.append('file', file);
-            formData.append('conf', document.getElementById('confThreshold').value);
-            formData.append('iou', document.getElementById('iouThreshold').value);
-            formData.append('max_det', document.getElementById('maxDet').value);
-            formData.append('agnostic_nms', document.getElementById('agnosticNms').checked);
+            // Статические значения параметров детекции
+            formData.append('conf', '0.20');
+            formData.append('iou', '0.45');
+            formData.append('max_det', '300');
+            formData.append('agnostic_nms', 'false');  // Подавлять overlapping детекции
             formData.append('pdf_page', document.getElementById('pdfPage').value);
 
             loading.classList.add('active');

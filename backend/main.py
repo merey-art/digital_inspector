@@ -205,7 +205,7 @@ def process_image(
     image_bytes: bytes,
     conf_threshold: float = 0.25,
     iou_threshold: float = 0.45,
-    agnostic_nms: bool = False,
+    agnostic_nms: bool = True,
     max_det: int = 300
 ) -> dict:
     """
@@ -389,7 +389,7 @@ async def inference(
     file: UploadFile = File(...),
     conf: float = Form(0.25),
     iou: float = Form(0.45),
-    agnostic_nms: bool = Form(False),
+    agnostic_nms: bool = Form(True),
     max_det: int = Form(300),
     draw_boxes_flag: bool = Form(True),
     pdf_page: int = Form(-1)  # -1 = все страницы, 0+ = конкретная страница
@@ -399,16 +399,22 @@ async def inference(
     
     Args:
         file: Загруженное изображение или PDF
-        conf: Порог уверенности (0-1)
-        iou: Порог IoU для NMS (0-1)
-        agnostic_nms: Использовать agnostic NMS
-        max_det: Максимальное количество детекций
+        conf: Порог уверенности (0-1) - игнорируется, используется статическое значение 0.25
+        iou: Порог IoU для NMS (0-1) - игнорируется, используется статическое значение 0.45
+        agnostic_nms: Использовать agnostic NMS - игнорируется, всегда True
+        max_det: Максимальное количество детекций - игнорируется, используется статическое значение 300
         draw_boxes_flag: Рисовать bounding boxes на изображении
         pdf_page: Для PDF: -1 = все страницы, 0+ = конкретная страница (0-indexed)
         
     Returns:
         Результаты детекции
     """
+    # Статические значения параметров детекции
+    STATIC_CONF = 0.25
+    STATIC_IOU = 0.45
+    STATIC_AGNOSTIC_NMS = True
+    STATIC_MAX_DET = 300
+    
     try:
         file_bytes = await file.read()
         
@@ -476,10 +482,10 @@ async def inference(
                 # Обработка страницы
                 page_result = process_image(
                     image_bytes,
-                    conf_threshold=conf,
-                    iou_threshold=iou,
-                    agnostic_nms=agnostic_nms,
-                    max_det=max_det
+                    conf_threshold=STATIC_CONF,
+                    iou_threshold=STATIC_IOU,
+                    agnostic_nms=STATIC_AGNOSTIC_NMS,
+                    max_det=STATIC_MAX_DET
                 )
                 
                 # Рисование boxes
@@ -526,10 +532,10 @@ async def inference(
             # Обработка
             result = process_image(
                 image_bytes,
-                conf_threshold=conf,
-                iou_threshold=iou,
-                agnostic_nms=agnostic_nms,
-                max_det=max_det
+                conf_threshold=STATIC_CONF,
+                iou_threshold=STATIC_IOU,
+                agnostic_nms=STATIC_AGNOSTIC_NMS,
+                max_det=STATIC_MAX_DET
             )
             result["pdf_info"] = {"is_pdf": False}
         else:
@@ -601,12 +607,18 @@ async def batch_inference(
     files: List[UploadFile] = File(...),
     conf: float = Form(0.25),
     iou: float = Form(0.45),
-    agnostic_nms: bool = Form(False),
+    agnostic_nms: bool = Form(True),
     max_det: int = Form(300)
 ):
     """
     Батч-инференс на нескольких изображениях
     """
+    # Статические значения параметров детекции
+    STATIC_CONF = 0.25
+    STATIC_IOU = 0.45
+    STATIC_AGNOSTIC_NMS = True
+    STATIC_MAX_DET = 300
+    
     results = []
     
     for file in files:
@@ -617,10 +629,10 @@ async def batch_inference(
             image_bytes = await file.read()
             result = process_image(
                 image_bytes,
-                conf_threshold=conf,
-                iou_threshold=iou,
-                agnostic_nms=agnostic_nms,
-                max_det=max_det
+                conf_threshold=STATIC_CONF,
+                iou_threshold=STATIC_IOU,
+                agnostic_nms=STATIC_AGNOSTIC_NMS,
+                max_det=STATIC_MAX_DET
             )
             
             results.append({
