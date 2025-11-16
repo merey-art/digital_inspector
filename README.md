@@ -110,7 +110,7 @@ digital_inspector/
 ```
 
 **Наше видео:**
-- https://drive.google.com/file/d/1zKLfzdgQfFQTIXQociQPK4MRHT7hPBnY/view?usp=sharing
+- https://drive.google.com/file/d/1N8UIOcCenoJ70HvkeEVaTJdrKlD0cn-C/view?usp=sharing
 ```
 
 ## 🔧 Требования
