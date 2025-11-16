@@ -187,6 +187,66 @@ async def health_check():
     }
 
 
+def parse_pdf_pages(pages_str: str, total_pages: int) -> List[int]:
+    """
+    Парсинг строки с номерами страниц PDF
+    
+    Поддерживаемые форматы:
+    - "-1" или пустая строка - все страницы
+    - "0" - одна страница (0-indexed)
+    - "0,1,3" - конкретные страницы через запятую
+    - "0-2" - диапазон страниц (включительно)
+    - "0,2-4,6" - комбинация конкретных страниц и диапазонов
+    
+    Args:
+        pages_str: Строка с номерами страниц
+        total_pages: Общее количество страниц в PDF
+        
+    Returns:
+        Список индексов страниц для обработки (0-indexed)
+    """
+    if not pages_str or pages_str.strip() == "" or pages_str.strip() == "-1":
+        # Все страницы
+        return list(range(total_pages))
+    
+    pages_str = pages_str.strip()
+    pages_set = set()
+    
+    # Разбиваем по запятым
+    parts = pages_str.split(',')
+    
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+            
+        if '-' in part:
+            # Диапазон страниц
+            try:
+                start, end = part.split('-', 1)
+                start = int(start.strip())
+                end = int(end.strip())
+                # Добавляем все страницы в диапазоне
+                for page in range(start, end + 1):
+                    if 0 <= page < total_pages:
+                        pages_set.add(page)
+            except ValueError:
+                logger.warning(f"Invalid page range format: {part}")
+                continue
+        else:
+            # Одна страница
+            try:
+                page = int(part)
+                if 0 <= page < total_pages:
+                    pages_set.add(page)
+            except ValueError:
+                logger.warning(f"Invalid page number: {part}")
+                continue
+    
+    # Возвращаем отсортированный список
+    return sorted(list(pages_set)) if pages_set else list(range(total_pages))
+
+
 def pdf_to_images(pdf_bytes: bytes) -> List[Image.Image]:
     """
     Конвертация PDF в список изображений
@@ -417,12 +477,7 @@ def draw_boxes(image_bytes: bytes, detections: List[dict]) -> str:
 async def inference(
     request: Request,
     file: UploadFile = File(...),
-    conf: float = Form(0.25),
-    iou: float = Form(0.45),
-    agnostic_nms: bool = Form(True),
-    max_det: int = Form(300),
-    draw_boxes_flag: bool = Form(True),
-    pdf_page: int = Form(-1)  # -1 = все страницы, 0+ = конкретная страница
+    pdf_page: str = Form("-1")  # "-1" = все страницы, "0,1,3" = конкретные страницы, "0-2" = диапазон
 ):
     """
     Инференс на загруженном изображении или PDF
@@ -430,12 +485,7 @@ async def inference(
     Args:
         request: Request объект (для rate limiting)
         file: Загруженное изображение или PDF
-        conf: Порог уверенности (0-1) - игнорируется, используется статическое значение 0.25
-        iou: Порог IoU для NMS (0-1) - игнорируется, используется статическое значение 0.45
-        agnostic_nms: Использовать agnostic NMS - игнорируется, всегда True
-        max_det: Максимальное количество детекций - игнорируется, используется статическое значение 300
-        draw_boxes_flag: Рисовать bounding boxes на изображении
-        pdf_page: Для PDF: -1 = все страницы, 0+ = конкретная страница (0-indexed)
+        pdf_page: Для PDF: "-1" = все страницы, "0,1,3" = конкретные страницы, "0-2" = диапазон (0-indexed)
         
     Returns:
         Результаты детекции
@@ -445,6 +495,7 @@ async def inference(
     STATIC_IOU = 0.45
     STATIC_AGNOSTIC_NMS = False
     STATIC_MAX_DET = 300
+    STATIC_DRAW_BOXES = True  # Всегда рисуем bounding boxes
     
     # Ограничение параллельных запросов
     async with REQUEST_SEMAPHORE:
@@ -496,14 +547,9 @@ async def inference(
                 all_detections = []
                 pages_results = []
                 
-                # Обработка всех страниц или выбранной
-                pages_to_process = []
-                if pdf_page >= 0 and pdf_page < total_pages:
-                    # Обработать конкретную страницу
-                    pages_to_process = [(pdf_page, pdf_images[pdf_page])]
-                else:
-                    # Обработать все страницы
-                    pages_to_process = [(i, img) for i, img in enumerate(pdf_images)]
+                # Парсинг номеров страниц для обработки
+                pages_to_process_indices = parse_pdf_pages(pdf_page, total_pages)
+                pages_to_process = [(i, pdf_images[i]) for i in pages_to_process_indices]
                 
                 # Обработка каждой страницы
                 for page_num, pil_image in pages_to_process:
@@ -577,9 +623,9 @@ async def inference(
                     detail="File must be an image (jpg, png, etc.) or PDF"
                 )
             
-            # Рисование boxes если нужно
+            # Рисование boxes
             annotated_image = None
-            if draw_boxes_flag:
+            if STATIC_DRAW_BOXES:
                 try:
                     annotated_image = draw_boxes(image_bytes, result["detections"])
                 except Exception as e:
@@ -640,12 +686,7 @@ async def inference(
 async def batch_inference(
     request: Request,
     files: List[UploadFile] = File(...),
-    conf: float = Form(0.25),
-    iou: float = Form(0.45),
-    agnostic_nms: bool = Form(True),
-    max_det: int = Form(300),
-    draw_boxes_flag: bool = Form(False),  # По умолчанию False для батча (экономия ресурсов)
-    pdf_page: int = Form(-1)  # -1 = все страницы, 0+ = конкретная страница
+    pdf_page: str = Form("-1")  # "-1" = все страницы, "0,1,3" = конкретные страницы, "0-2" = диапазон
 ):
     """
     Батч-инференс на нескольких изображениях или PDF файлах
@@ -653,12 +694,21 @@ async def batch_inference(
     Поддерживает:
     - Изображения (JPG, PNG, BMP и т.д.)
     - PDF файлы (все страницы или конкретная страница)
+    
+    Args:
+        request: Request объект (для rate limiting)
+        files: Список загруженных изображений или PDF файлов
+        pdf_page: Для PDF: "-1" = все страницы, "0,1,3" = конкретные страницы, "0-2" = диапазон (0-indexed)
+        
+    Returns:
+        Результаты обработки для каждого файла
     """
     # Статические значения параметров детекции
     STATIC_CONF = 0.20
     STATIC_IOU = 0.45
     STATIC_AGNOSTIC_NMS = False
     STATIC_MAX_DET = 300
+    STATIC_DRAW_BOXES = True  # Всегда рисуем bounding boxes
     
     # Ограничение параллельных запросов
     async with REQUEST_SEMAPHORE:
@@ -711,10 +761,8 @@ async def batch_inference(
                             pdf_pages_count = len(pdf_images)
                             
                             # Определяем сколько страниц будем обрабатывать
-                            if pdf_page >= 0:
-                                pages_to_process = 1 if pdf_page < pdf_pages_count else 0
-                            else:
-                                pages_to_process = pdf_pages_count
+                            pages_to_process_indices = parse_pdf_pages(pdf_page, pdf_pages_count)
+                            pages_to_process = len(pages_to_process_indices)
                             
                             total_pdf_pages += pages_to_process
                             
@@ -774,11 +822,9 @@ async def batch_inference(
                             continue
                         
                         total_pages = len(pdf_images)
-                        pages_to_process = []
-                        if pdf_page >= 0 and pdf_page < total_pages:
-                            pages_to_process = [(pdf_page, pdf_images[pdf_page])]
-                        else:
-                            pages_to_process = [(i, img) for i, img in enumerate(pdf_images)]
+                        # Парсинг номеров страниц для обработки
+                        pages_to_process_indices = parse_pdf_pages(pdf_page, total_pages)
+                        pages_to_process = [(i, pdf_images[i]) for i in pages_to_process_indices]
                         
                         # Обработка страниц PDF
                         all_detections = []
@@ -802,7 +848,7 @@ async def batch_inference(
                             
                             # Рисование boxes если нужно
                             annotated_img = None
-                            if draw_boxes_flag:
+                            if STATIC_DRAW_BOXES:
                                 try:
                                     annotated_img = draw_boxes(image_bytes, page_result["detections"])
                                 except Exception as e:
@@ -834,7 +880,7 @@ async def batch_inference(
                                 "is_pdf": True
                             },
                             "pages": pages_results,
-                            "annotated_image": first_page_result["annotated_image"] if first_page_result and draw_boxes_flag else None
+                            "annotated_image": first_page_result["annotated_image"] if first_page_result and STATIC_DRAW_BOXES else None
                         })
                     
                     except Exception as e:
@@ -860,7 +906,7 @@ async def batch_inference(
                     
                     # Рисование boxes если нужно
                     annotated_image = None
-                    if draw_boxes_flag:
+                    if STATIC_DRAW_BOXES:
                         try:
                             annotated_image = draw_boxes(image_bytes, result["detections"])
                         except Exception as e:

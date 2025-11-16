@@ -320,8 +320,12 @@
 
             <div class="settings">
                 <div class="setting-item">
-                    <label for="pdfPage">PDF страница (-1 = все страницы)</label>
-                    <input type="number" id="pdfPage" min="-1" value="-1" title="-1 = обработать все страницы, 0+ = конкретная страница">
+                    <label for="pdfPage">PDF страницы</label>
+                    <input type="text" id="pdfPage" value="-1" placeholder="-1" 
+                           title='-1 = все страницы, "0,1,3" = конкретные страницы, "0-2" = диапазон (0-indexed)'>
+                    <small style="color: #666; font-size: 0.85em; margin-top: 5px; display: block;">
+                        Примеры: -1 (все), 0 (первая), "0,2,4" (конкретные), "0-2" (диапазон)
+                    </small>
                 </div>
             </div>
 
@@ -473,11 +477,6 @@
 
             const formData = new FormData();
             formData.append('file', file);
-            // Статические значения параметров детекции
-            formData.append('conf', '0.20');
-            formData.append('iou', '0.45');
-            formData.append('max_det', '300');
-            formData.append('agnostic_nms', 'false');  // Подавлять overlapping детекции
             formData.append('pdf_page', document.getElementById('pdfPage').value);
 
             loading.classList.add('active');
@@ -531,12 +530,7 @@
             for (const file of validFiles) {
                 formData.append('files', file);
             }
-            formData.append('conf', '0.20');
-            formData.append('iou', '0.45');
-            formData.append('max_det', '300');
-            formData.append('agnostic_nms', 'false');
             formData.append('pdf_page', document.getElementById('pdfPage').value);
-            formData.append('draw_boxes_flag', 'false'); // По умолчанию false для батча
 
             loading.classList.add('active');
             errorMessage.classList.remove('active');
