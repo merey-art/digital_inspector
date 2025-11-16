@@ -643,15 +643,21 @@ async def batch_inference(
     conf: float = Form(0.25),
     iou: float = Form(0.45),
     agnostic_nms: bool = Form(True),
-    max_det: int = Form(300)
+    max_det: int = Form(300),
+    draw_boxes_flag: bool = Form(False),  # По умолчанию False для батча (экономия ресурсов)
+    pdf_page: int = Form(-1)  # -1 = все страницы, 0+ = конкретная страница
 ):
     """
-    Батч-инференс на нескольких изображениях
+    Батч-инференс на нескольких изображениях или PDF файлах
+    
+    Поддерживает:
+    - Изображения (JPG, PNG, BMP и т.д.)
+    - PDF файлы (все страницы или конкретная страница)
     """
     # Статические значения параметров детекции
-    STATIC_CONF = 0.25
+    STATIC_CONF = 0.20
     STATIC_IOU = 0.45
-    STATIC_AGNOSTIC_NMS = True
+    STATIC_AGNOSTIC_NMS = False
     STATIC_MAX_DET = 300
     
     # Ограничение параллельных запросов
@@ -666,29 +672,220 @@ async def batch_inference(
                 detail=f"Too many files. Maximum batch size: {MAX_BATCH_SIZE}"
             )
         
+        # Лимит на общее количество страниц PDF (защита от перегрузки памяти)
+        MAX_TOTAL_PDF_PAGES = int(os.getenv("MAX_TOTAL_PDF_PAGES", "100"))
+        MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
+        
+        # Сначала читаем все файлы и проверяем лимиты
+        files_data = []
+        total_pdf_pages = 0
+        
         for file in files:
             try:
-                if not file.content_type.startswith("image/"):
+                file_bytes = await file.read()
+                
+                if not file_bytes or len(file_bytes) == 0:
+                    results.append({
+                        "filename": file.filename,
+                        "success": False,
+                        "error": "File is empty or could not be read"
+                    })
                     continue
                 
-                image_bytes = await file.read()
-                result = process_image(
-                    image_bytes,
-                    conf_threshold=STATIC_CONF,
-                    iou_threshold=STATIC_IOU,
-                    agnostic_nms=STATIC_AGNOSTIC_NMS,
-                    max_det=STATIC_MAX_DET
-                )
+                if len(file_bytes) > MAX_FILE_SIZE:
+                    results.append({
+                        "filename": file.filename,
+                        "success": False,
+                        "error": f"File too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.0f} MB"
+                    })
+                    continue
                 
-                results.append({
+                content_type = file.content_type or ""
+                
+                # Проверяем, является ли файл PDF и подсчитываем страницы
+                if content_type == "application/pdf" or (file.filename and file.filename.lower().endswith('.pdf')):
+                    if PDF_SUPPORT:
+                        try:
+                            # Подсчитываем количество страниц
+                            pdf_images = pdf_to_images(file_bytes)
+                            pdf_pages_count = len(pdf_images)
+                            
+                            # Определяем сколько страниц будем обрабатывать
+                            if pdf_page >= 0:
+                                pages_to_process = 1 if pdf_page < pdf_pages_count else 0
+                            else:
+                                pages_to_process = pdf_pages_count
+                            
+                            total_pdf_pages += pages_to_process
+                            
+                            if total_pdf_pages > MAX_TOTAL_PDF_PAGES:
+                                results.append({
+                                    "filename": file.filename,
+                                    "success": False,
+                                    "error": f"Total PDF pages limit exceeded. Maximum: {MAX_TOTAL_PDF_PAGES} pages across all PDFs"
+                                })
+                                continue
+                        except Exception as e:
+                            logger.warning(f"Error checking PDF pages for {file.filename}: {e}")
+                            # Продолжаем обработку, но с осторожностью
+                
+                # Сохраняем данные файла для обработки
+                files_data.append({
                     "filename": file.filename,
-                    "success": True,
-                    **result
+                    "content_type": content_type,
+                    "bytes": file_bytes
                 })
             
             except Exception as e:
+                logger.error(f"Error reading file {file.filename}: {e}")
                 results.append({
                     "filename": file.filename,
+                    "success": False,
+                    "error": f"Error reading file: {str(e)}"
+                })
+        
+        # Теперь обрабатываем файлы
+        for file_data in files_data:
+            try:
+                file_bytes = file_data["bytes"]
+                filename = file_data["filename"]
+                content_type = file_data["content_type"]
+                
+                # Обработка PDF
+                if content_type == "application/pdf" or (filename and filename.lower().endswith('.pdf')):
+                    if not PDF_SUPPORT:
+                        results.append({
+                            "filename": filename,
+                            "success": False,
+                            "error": "PDF support not available. Install pdf2image or PyMuPDF"
+                        })
+                        continue
+                    
+                    try:
+                        # Конвертация PDF в изображения
+                        pdf_images = pdf_to_images(file_bytes)
+                        
+                        if len(pdf_images) == 0:
+                            results.append({
+                                "filename": filename,
+                                "success": False,
+                                "error": "PDF is empty or could not be converted"
+                            })
+                            continue
+                        
+                        total_pages = len(pdf_images)
+                        pages_to_process = []
+                        if pdf_page >= 0 and pdf_page < total_pages:
+                            pages_to_process = [(pdf_page, pdf_images[pdf_page])]
+                        else:
+                            pages_to_process = [(i, img) for i, img in enumerate(pdf_images)]
+                        
+                        # Обработка страниц PDF
+                        all_detections = []
+                        pages_results = []
+                        total_inference_time = 0.0
+                        
+                        for page_num, pil_image in pages_to_process:
+                            # Конвертация PIL Image в bytes
+                            img_byte_arr = io.BytesIO()
+                            pil_image.save(img_byte_arr, format='PNG')
+                            image_bytes = img_byte_arr.getvalue()
+                            
+                            # Обработка страницы
+                            page_result = process_image(
+                                image_bytes,
+                                conf_threshold=STATIC_CONF,
+                                iou_threshold=STATIC_IOU,
+                                agnostic_nms=STATIC_AGNOSTIC_NMS,
+                                max_det=STATIC_MAX_DET
+                            )
+                            
+                            # Рисование boxes если нужно
+                            annotated_img = None
+                            if draw_boxes_flag:
+                                try:
+                                    annotated_img = draw_boxes(image_bytes, page_result["detections"])
+                                except Exception as e:
+                                    logger.warning(f"Error drawing boxes for {filename} page {page_num}: {e}")
+                            
+                            pages_results.append({
+                                "page_number": page_num,
+                                "detections": page_result["detections"],
+                                "num_detections": page_result["num_detections"],
+                                "image_size": page_result["image_size"],
+                                "annotated_image": annotated_img
+                            })
+                            
+                            all_detections.extend(page_result["detections"])
+                            total_inference_time += page_result["inference_time"]
+                        
+                        # Результат для файла
+                        first_page_result = pages_results[0] if pages_results else None
+                        results.append({
+                            "filename": filename,
+                            "success": True,
+                            "detections": first_page_result["detections"] if first_page_result else [],
+                            "num_detections": sum(p["num_detections"] for p in pages_results),
+                            "image_size": first_page_result["image_size"] if first_page_result else {"width": 0, "height": 0},
+                            "inference_time": total_inference_time,
+                            "pdf_info": {
+                                "total_pages": total_pages,
+                                "processed_pages": len(pages_to_process),
+                                "is_pdf": True
+                            },
+                            "pages": pages_results,
+                            "annotated_image": first_page_result["annotated_image"] if first_page_result and draw_boxes_flag else None
+                        })
+                    
+                    except Exception as e:
+                        logger.error(f"Error processing PDF {filename}: {e}")
+                        import traceback
+                        logger.error(f"Traceback: {traceback.format_exc()}")
+                        results.append({
+                            "filename": filename,
+                            "success": False,
+                            "error": f"Error processing PDF: {str(e)}"
+                        })
+                
+                # Обработка изображения
+                elif content_type.startswith("image/"):
+                    image_bytes = file_bytes
+                    result = process_image(
+                        image_bytes,
+                        conf_threshold=STATIC_CONF,
+                        iou_threshold=STATIC_IOU,
+                        agnostic_nms=STATIC_AGNOSTIC_NMS,
+                        max_det=STATIC_MAX_DET
+                    )
+                    
+                    # Рисование boxes если нужно
+                    annotated_image = None
+                    if draw_boxes_flag:
+                        try:
+                            annotated_image = draw_boxes(image_bytes, result["detections"])
+                        except Exception as e:
+                            logger.warning(f"Error drawing boxes for {filename}: {e}")
+                    
+                    results.append({
+                        "filename": filename,
+                        "success": True,
+                        **result,
+                        "pdf_info": {"is_pdf": False},
+                        "annotated_image": annotated_image
+                    })
+                else:
+                    results.append({
+                        "filename": filename,
+                        "success": False,
+                        "error": "File must be an image (jpg, png, etc.) or PDF"
+                    })
+            
+            except Exception as e:
+                logger.error(f"Error processing file {filename}: {e}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                results.append({
+                    "filename": filename,
                     "success": False,
                     "error": str(e)
                 })

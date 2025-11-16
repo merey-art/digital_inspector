@@ -109,6 +109,10 @@ digital_inspector/
 - https://drive.google.com/file/d/1lp-34vRkM8LpRTJFDRNlb62w7_lk6-94/view?usp=sharing
 ```
 
+**Наше видео:**
+- https://drive.google.com/file/d/1zKLfzdgQfFQTIXQociQPK4MRHT7hPBnY/view?usp=sharing
+```
+
 ## 🔧 Требования
 
 ### Системные требования

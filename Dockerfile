@@ -17,10 +17,10 @@ WORKDIR /app
 # Копирование и установка зависимостей Python
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu121 && \
+    pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir fastapi uvicorn[standard] python-multipart pydantic PyMuPDF slowapi && \
     pip install --no-cache-dir -r requirements.txt
-# Примечание: Для CPU версии замените cu121 на cpu в строке выше
+# Примечание: Для GPU версии замените cpu на cu121 в строке выше
 
 # Копирование кода приложения
 COPY backend/ ./backend/

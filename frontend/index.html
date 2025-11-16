@@ -300,12 +300,22 @@
             <div class="upload-section" id="uploadSection">
                 <h2>Загрузите изображение или PDF документ</h2>
                 <p style="margin: 20px 0; color: #666;">
-                    Перетащите изображение или PDF документ сюда или нажмите кнопку для выбора файла
+                    Перетащите файлы сюда или нажмите кнопку для выбора
                 </p>
-                <input type="file" id="fileInput" class="file-input" accept="image/*,.pdf">
+                <input type="file" id="fileInput" class="file-input" accept="image/*,.pdf" multiple>
                 <button class="upload-btn" onclick="document.getElementById('fileInput').click()">
-                    Выбрать файл
+                    📁 Выбрать файл(ы)
                 </button>
+                <div style="margin: 15px 0; padding: 12px; background: #e3f2fd; border-radius: 8px; border-left: 4px solid #2196f3;">
+                    <p style="margin: 0; color: #1976d2; font-size: 0.95em; font-weight: 500;">
+                        💡 <strong>Совет:</strong> Можно выбрать несколько файлов одновременно!
+                    </p>
+                    <p style="margin: 5px 0 0 0; color: #555; font-size: 0.9em;">
+                        • При выборе через кнопку: удерживайте <strong>Ctrl</strong> (Windows/Linux) или <strong>Cmd</strong> (Mac) для выбора нескольких файлов<br>
+                        • Или перетащите несколько файлов сразу в область выше<br>
+                        • Поддерживаются изображения (JPG, PNG) и PDF файлы
+                    </p>
+                </div>
             </div>
 
             <div class="settings">
@@ -330,6 +340,20 @@
                     <button id="prevPage" class="upload-btn" style="margin: 5px;">← Предыдущая</button>
                     <span id="pageInfo" style="margin: 0 15px; font-weight: bold;"></span>
                     <button id="nextPage" class="upload-btn" style="margin: 5px;">Следующая →</button>
+                </div>
+                
+                <!-- Навигация между файлами в батч-режиме -->
+                <div id="batchNavigation" style="display: none; margin-bottom: 20px; text-align: center; padding: 15px; background: #f0f0f0; border-radius: 8px;">
+                    <div style="margin-bottom: 10px;">
+                        <button id="prevFile" class="upload-btn" style="margin: 5px;">← Предыдущий файл</button>
+                        <span id="fileInfo" style="margin: 0 15px; font-weight: bold; font-size: 1.1em;"></span>
+                        <button id="nextFile" class="upload-btn" style="margin: 5px;">Следующий файл →</button>
+                    </div>
+                    <div id="batchPageNavigation" style="display: none; margin-top: 10px;">
+                        <button id="prevBatchPage" class="upload-btn" style="margin: 5px;">← Предыдущая страница</button>
+                        <span id="batchPageInfo" style="margin: 0 15px; font-weight: bold;"></span>
+                        <button id="nextBatchPage" class="upload-btn" style="margin: 5px;">Следующая страница →</button>
+                    </div>
                 </div>
                 
                 <div class="results-section">
@@ -367,9 +391,24 @@
         const nextPageBtn = document.getElementById('nextPage');
         const pageInfo = document.getElementById('pageInfo');
         
+        // Элементы навигации для батч-режима
+        const batchNavigation = document.getElementById('batchNavigation');
+        const prevFileBtn = document.getElementById('prevFile');
+        const nextFileBtn = document.getElementById('nextFile');
+        const fileInfo = document.getElementById('fileInfo');
+        const batchPageNavigation = document.getElementById('batchPageNavigation');
+        const prevBatchPageBtn = document.getElementById('prevBatchPage');
+        const nextBatchPageBtn = document.getElementById('nextBatchPage');
+        const batchPageInfo = document.getElementById('batchPageInfo');
+        
         // Хранение результатов PDF
         let pdfPagesData = null;
         let currentPageIndex = 0;
+        
+        // Хранение данных для батч-режима
+        let batchFilesData = null; // Массив данных о файлах [{file, result, pages: []}, ...]
+        let currentFileIndex = 0; // Текущий файл в батч-режиме
+        let currentFilePageIndex = 0; // Текущая страница в текущем файле
 
         // Drag and drop
         uploadSection.addEventListener('dragover', (e) => {
@@ -386,13 +425,38 @@
             uploadSection.classList.remove('dragover');
             const files = e.dataTransfer.files;
             if (files.length > 0) {
-                handleFile(files[0]);
+                if (files.length === 1) {
+                    // Один файл - используем старый endpoint
+                    handleFile(files[0]);
+                } else {
+                    // Несколько файлов - используем batch endpoint
+                    handleMultipleFiles(Array.from(files));
+                }
             }
         });
 
         fileInput.addEventListener('change', (e) => {
             if (e.target.files.length > 0) {
-                handleFile(e.target.files[0]);
+                // Показываем информацию о выбранных файлах
+                const fileCount = e.target.files.length;
+                if (fileCount > 1) {
+                    const fileNames = Array.from(e.target.files).map(f => f.name).join(', ');
+                    console.log(`Выбрано ${fileCount} файлов:`, fileNames);
+                    // Можно показать уведомление пользователю
+                    const notification = document.createElement('div');
+                    notification.style.cssText = 'position: fixed; top: 20px; right: 20px; background: #4caf50; color: white; padding: 15px 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); z-index: 10000;';
+                    notification.textContent = `✓ Выбрано ${fileCount} файлов. Обработка...`;
+                    document.body.appendChild(notification);
+                    setTimeout(() => notification.remove(), 3000);
+                }
+                
+                if (fileCount === 1) {
+                    // Один файл - используем старый endpoint
+                    handleFile(e.target.files[0]);
+                } else {
+                    // Несколько файлов - используем batch endpoint
+                    handleMultipleFiles(Array.from(e.target.files));
+                }
             }
         });
 
@@ -436,6 +500,63 @@
             } catch (error) {
                 console.error('API Error:', error);
                 console.error('API_URL:', API_URL);
+                const errorMsg = error.message || 'Неизвестная ошибка';
+                showError(`Ошибка: ${errorMsg}. Проверьте, что Backend API доступен по адресу ${API_URL}`);
+            } finally {
+                loading.classList.remove('active');
+            }
+        }
+
+        async function handleMultipleFiles(files) {
+            // Проверка типов файлов
+            const validFiles = [];
+            for (const file of files) {
+                const isImage = file.type.startsWith('image/');
+                const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+                if (isImage || isPdf) {
+                    validFiles.push(file);
+                }
+            }
+
+            if (validFiles.length === 0) {
+                showError('Пожалуйста, выберите изображения или PDF файлы');
+                return;
+            }
+
+            if (validFiles.length !== files.length) {
+                showError(`Загружено ${validFiles.length} из ${files.length} файлов. Некоторые файлы были пропущены (только изображения и PDF).`);
+            }
+
+            const formData = new FormData();
+            for (const file of validFiles) {
+                formData.append('files', file);
+            }
+            formData.append('conf', '0.20');
+            formData.append('iou', '0.45');
+            formData.append('max_det', '300');
+            formData.append('agnostic_nms', 'false');
+            formData.append('pdf_page', document.getElementById('pdfPage').value);
+            formData.append('draw_boxes_flag', 'false'); // По умолчанию false для батча
+
+            loading.classList.add('active');
+            errorMessage.classList.remove('active');
+            results.style.display = 'none';
+
+            try {
+                const response = await fetch(`${API_URL}/api/batch-inference`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Ошибка при обработке файлов');
+                }
+
+                const data = await response.json();
+                displayBatchResults(data, validFiles);
+            } catch (error) {
+                console.error('Batch API Error:', error);
                 const errorMsg = error.message || 'Неизвестная ошибка';
                 showError(`Ошибка: ${errorMsg}. Проверьте, что Backend API доступен по адресу ${API_URL}`);
             } finally {
@@ -609,6 +730,12 @@
             console.log('displayResults called with data:', data);
             console.log('originalFile:', originalFile.name, originalFile.type);
             
+            // Очищаем галерею батч-режима, если она есть
+            const batchGallery = document.getElementById('batchGallery');
+            if (batchGallery) {
+                batchGallery.remove();
+            }
+            
             // Формат API: {success, detections, num_detections, image_size, annotated_image, pdf_info, pages}
             if (!data.success) {
                 showError('Ошибка обработки: ' + (data.error || 'Неизвестная ошибка'));
@@ -720,6 +847,7 @@
 
                 // Используем annotated_image из API, если есть
                 if (data.annotated_image) {
+                    showResultImage(); // Показываем изображение
                     resultImage.src = data.annotated_image.startsWith('data:') 
                         ? data.annotated_image 
                         : `data:image/jpeg;base64,${data.annotated_image}`;
@@ -759,6 +887,239 @@
                 displayDetectionsList(annotations);
             }
         }
+
+        async function displayBatchResults(data, files) {
+            // data.results - массив результатов для каждого файла
+            console.log('displayBatchResults called with:', data);
+            
+            if (!data.results || data.results.length === 0) {
+                showError('Нет результатов обработки');
+                return;
+            }
+
+            // Показываем результаты
+            results.style.display = 'block';
+            pdfNavigation.style.display = 'none';
+            showResultImage();
+            
+            // Удаляем старую галерею, если есть
+            const oldGallery = document.getElementById('batchGallery');
+            if (oldGallery) {
+                oldGallery.remove();
+            }
+            
+            // Подсчитываем общую статистику и сохраняем данные о файлах
+            let totalDetections = 0;
+            let successfulFiles = 0;
+            let failedFiles = 0;
+            let totalPages = 0;
+            
+            batchFilesData = [];
+            
+            for (let index = 0; index < data.results.length; index++) {
+                const result = data.results[index];
+                const file = files[index];
+                const fileName = result.filename || file?.name || `Файл ${index + 1}`;
+                
+                if (result.success) {
+                    successfulFiles++;
+                    const detections = result.num_detections || 0;
+                    totalDetections += detections;
+                    
+                    const isPdf = result.pdf_info && result.pdf_info.is_pdf;
+                    const pagesCount = isPdf ? (result.pdf_info.processed_pages || 0) : 1;
+                    if (isPdf) {
+                        totalPages += pagesCount;
+                    }
+                    
+                    // Сохраняем все страницы для PDF
+                    const filePages = [];
+                    if (isPdf && result.pages && result.pages.length > 0) {
+                        // Для PDF сохраняем все страницы
+                        for (const page of result.pages) {
+                            filePages.push({
+                                page_number: page.page_number,
+                                annotated_image: page.annotated_image,
+                                detections: page.detections,
+                                image_size: page.image_size,
+                                num_detections: page.num_detections
+                            });
+                        }
+                    } else {
+                        // Для обычных изображений - одна "страница"
+                        filePages.push({
+                            page_number: 0,
+                            annotated_image: result.annotated_image,
+                            detections: result.detections,
+                            image_size: result.image_size,
+                            num_detections: result.num_detections
+                        });
+                    }
+                    
+                    batchFilesData.push({
+                        file: file,
+                        result: result,
+                        fileName: fileName,
+                        isPdf: isPdf,
+                        pages: filePages,
+                        detections: detections
+                    });
+                } else {
+                    failedFiles++;
+                    batchFilesData.push({
+                        file: file,
+                        result: result,
+                        fileName: fileName,
+                        isPdf: false,
+                        pages: [],
+                        detections: 0,
+                        error: result.error
+                    });
+                }
+            }
+
+            // Общая статистика
+            stats.innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-value">${totalDetections}</div>
+                    <div class="stat-label">Всего объектов</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${successfulFiles}</div>
+                    <div class="stat-label">Успешно обработано</div>
+                </div>
+                ${failedFiles > 0 ? `
+                <div class="stat-card" style="background: #ffebee;">
+                    <div class="stat-value" style="color: #d32f2f;">${failedFiles}</div>
+                    <div class="stat-label" style="color: #d32f2f;">Ошибок</div>
+                </div>
+                ` : ''}
+                ${totalPages > 0 ? `
+                <div class="stat-card">
+                    <div class="stat-value">${totalPages}</div>
+                    <div class="stat-label">Страниц PDF</div>
+                </div>
+                ` : ''}
+            `;
+
+            // Показываем навигацию между файлами
+            batchNavigation.style.display = 'block';
+            currentFileIndex = 0;
+            currentFilePageIndex = 0;
+            
+            // Отображаем первый файл
+            displayBatchFile(currentFileIndex);
+        }
+        
+        function displayBatchFile(fileIndex) {
+            if (!batchFilesData || fileIndex < 0 || fileIndex >= batchFilesData.length) {
+                return;
+            }
+            
+            const fileData = batchFilesData[fileIndex];
+            currentFileIndex = fileIndex;
+            currentFilePageIndex = 0;
+            
+            // Обновляем информацию о файле
+            fileInfo.textContent = `Файл ${fileIndex + 1} из ${batchFilesData.length}: ${fileData.fileName}`;
+            
+            // Обновляем кнопки навигации между файлами
+            prevFileBtn.disabled = fileIndex === 0;
+            nextFileBtn.disabled = fileIndex === batchFilesData.length - 1;
+            
+            // Показываем первую страницу файла
+            displayBatchPage(fileIndex, 0);
+        }
+        
+        async function displayBatchPage(fileIndex, pageIndex) {
+            if (!batchFilesData || fileIndex < 0 || fileIndex >= batchFilesData.length) {
+                return;
+            }
+            
+            const fileData = batchFilesData[fileIndex];
+            if (pageIndex < 0 || pageIndex >= fileData.pages.length) {
+                return;
+            }
+            
+            currentFilePageIndex = pageIndex;
+            const page = fileData.pages[pageIndex];
+            
+            // Показываем/скрываем навигацию по страницам
+            if (fileData.pages.length > 1) {
+                batchPageNavigation.style.display = 'block';
+                batchPageInfo.textContent = `Страница ${pageIndex + 1} из ${fileData.pages.length}`;
+                prevBatchPageBtn.disabled = pageIndex === 0;
+                nextBatchPageBtn.disabled = pageIndex === fileData.pages.length - 1;
+            } else {
+                batchPageNavigation.style.display = 'none';
+            }
+            
+            // Отображаем изображение
+            let imageSrc = page.annotated_image;
+            
+            // Если нет аннотированного изображения, пытаемся создать его
+            if (!imageSrc && fileData.file) {
+                if (fileData.isPdf) {
+                    try {
+                        const pdfImagesData = await loadPdfPages(fileData.file);
+                        if (pdfImagesData && pdfImagesData[pageIndex]) {
+                            const annotations = page.detections.map(d => ({
+                                category: d.class_name,
+                                bbox: d.bbox
+                            }));
+                            imageSrc = await drawAnnotationsOnImage(
+                                pdfImagesData[pageIndex],
+                                annotations,
+                                page.image_size
+                            );
+                        }
+                    } catch (error) {
+                        console.error('Error loading PDF page:', error);
+                    }
+                } else if (fileData.file.type.startsWith('image/')) {
+                    try {
+                        const reader = new FileReader();
+                        const fileDataUrl = await new Promise((resolve, reject) => {
+                            reader.onload = (e) => resolve(e.target.result);
+                            reader.onerror = reject;
+                            reader.readAsDataURL(fileData.file);
+                        });
+                        
+                        const annotations = page.detections.map(d => ({
+                            category: d.class_name,
+                            bbox: d.bbox
+                        }));
+                        imageSrc = await drawAnnotationsOnImage(
+                            fileDataUrl,
+                            annotations,
+                            page.image_size
+                        );
+                    } catch (error) {
+                        console.error('Error processing image:', error);
+                    }
+                }
+            }
+            
+            if (imageSrc) {
+                showResultImage();
+                resultImage.src = imageSrc;
+            } else {
+                resultImage.style.display = 'none';
+            }
+            
+            // Отображаем детекции
+            const annotations = page.detections.map(d => ({
+                category: d.class_name,
+                confidence: d.confidence,
+                bbox: d.bbox
+            }));
+            displayDetectionsList(annotations);
+        }
+
+        // Убеждаемся, что изображение показывается при обработке одного файла
+        function showResultImage() {
+            resultImage.style.display = 'block';
+        }
         
         function displayPage(pageIndex) {
             if (!pdfPagesData || pageIndex < 0 || pageIndex >= pdfPagesData.length) {
@@ -770,6 +1131,7 @@
             
             // Используем готовое изображение с аннотациями от backend
             if (page.annotated_image && page.annotated_image !== null) {
+                showResultImage(); // Показываем изображение
                 resultImage.src = page.annotated_image;
             } else {
                 console.warn('No annotated image for page', pageIndex);
@@ -873,6 +1235,34 @@
             if (pdfPagesData && currentPageIndex < pdfPagesData.length - 1) {
                 currentPageIndex++;
                 displayPage(currentPageIndex);
+            }
+        });
+        
+        // Обработчики навигации для батч-режима
+        prevFileBtn.addEventListener('click', () => {
+            if (batchFilesData && currentFileIndex > 0) {
+                displayBatchFile(currentFileIndex - 1);
+            }
+        });
+        
+        nextFileBtn.addEventListener('click', () => {
+            if (batchFilesData && currentFileIndex < batchFilesData.length - 1) {
+                displayBatchFile(currentFileIndex + 1);
+            }
+        });
+        
+        prevBatchPageBtn.addEventListener('click', () => {
+            if (batchFilesData && currentFilePageIndex > 0) {
+                displayBatchPage(currentFileIndex, currentFilePageIndex - 1);
+            }
+        });
+        
+        nextBatchPageBtn.addEventListener('click', () => {
+            if (batchFilesData) {
+                const fileData = batchFilesData[currentFileIndex];
+                if (fileData && currentFilePageIndex < fileData.pages.length - 1) {
+                    displayBatchPage(currentFileIndex, currentFilePageIndex + 1);
+                }
             }
         });
 

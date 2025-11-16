@@ -6,15 +6,17 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: cpu
     container_name: digital-inspector-cpu
     ports:
-      - "8000:8000"
+      - "8000:8000"  # Backend API
+      - "8080:8080"  # Frontend
     volumes:
       # Монтируем модель (если она находится локально)
       - ./training_results:/app/training_results:ro
       # Монтируем frontend для разработки (опционально)
       - ./frontend:/app/frontend:ro
+      # Монтируем backend для разработки (чтобы изменения применялись без пересборки)
+      - ./backend:/app/backend:ro
     environment:
       - MODEL_PATH=/app/training_results/run_default_15ep2/weights/best.pt
       - PYTHONUNBUFFERED=1
@@ -27,19 +29,22 @@ services:
       start_period: 40s
 
   # CUDA версия (для GPU)
+  # ВНИМАНИЕ: Для GPU версии нужно изменить Dockerfile (строка 20: заменить cu121 на cpu для CPU версии)
   digital-inspector-gpu:
     build:
       context: .
       dockerfile: Dockerfile
-      target: cuda
     container_name: digital-inspector-gpu
     ports:
-      - "8000:8000"
+      - "8000:8000"  # Backend API
+      - "8080:8080"  # Frontend
     volumes:
       # Монтируем модель (если она находится локально)
       - ./training_results:/app/training_results:ro
       # Монтируем frontend для разработки (опционально)
       - ./frontend:/app/frontend:ro
+      # Монтируем backend для разработки (чтобы изменения применялись без пересборки)
+      - ./backend:/app/backend:ro
     environment:
       - MODEL_PATH=/app/training_results/run_default_15ep2/weights/best.pt
       - PYTHONUNBUFFERED=1
