@@ -6,11 +6,13 @@ API для детекции печатей, подписей и QR-кодов н
 import os
 import io
 import base64
+import asyncio
 from pathlib import Path
 from typing import List, Optional
 import logging
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -19,6 +21,9 @@ import cv2
 import numpy as np
 from PIL import Image
 from ultralytics import YOLO
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 # PDF обработка
 try:
@@ -37,12 +42,42 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Настройки для управления нагрузкой (определяем до использования)
+MAX_CONCURRENT_REQUESTS = int(os.getenv("MAX_CONCURRENT_REQUESTS", "10"))  # Максимум параллельных запросов
+REQUEST_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+
+# Rate Limiter
+limiter = Limiter(key_func=get_remote_address)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Управление жизненным циклом приложения"""
+    # Startup
+    try:
+        load_model()
+        logger.info("Backend started successfully")
+        logger.info(f"Max concurrent requests: {MAX_CONCURRENT_REQUESTS}")
+        logger.info(f"Device: {device}")
+    except Exception as e:
+        logger.error(f"Failed to load model: {e}")
+    yield
+    # Shutdown
+    logger.info("Shutting down backend...")
+    # Очистка ресурсов при необходимости
+
+
 # Инициализация FastAPI
 app = FastAPI(
     title="Digital Inspector API",
     description="API для детекции печатей, подписей и QR-кодов на документах",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
+
+# Подключение rate limiter
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS middleware
 app.add_middleware(
@@ -70,8 +105,6 @@ CLASS_NAMES = {
     1: "signature",
     2: "stamp"
 }
-
-logger = logging.getLogger(__name__)
 
 CLASS_COLORS = {
     0: (255, 0, 0),      # Синий для QR-кодов
@@ -129,14 +162,6 @@ def load_model():
     return model
 
 
-@app.on_event("startup")
-async def startup_event():
-    """Инициализация при запуске"""
-    try:
-        load_model()
-        logger.info("Backend started successfully")
-    except Exception as e:
-        logger.error(f"Failed to load model: {e}")
 
 
 @app.get("/")
@@ -388,7 +413,9 @@ def draw_boxes(image_bytes: bytes, detections: List[dict]) -> str:
 
 
 @app.post("/api/inference", response_model=InferenceResponse)
+@limiter.limit("30/minute")  # Rate limit: 30 запросов в минуту
 async def inference(
+    request: Request,
     file: UploadFile = File(...),
     conf: float = Form(0.25),
     iou: float = Form(0.45),
@@ -401,6 +428,7 @@ async def inference(
     Инференс на загруженном изображении или PDF
     
     Args:
+        request: Request объект (для rate limiting)
         file: Загруженное изображение или PDF
         conf: Порог уверенности (0-1) - игнорируется, используется статическое значение 0.25
         iou: Порог IoU для NMS (0-1) - игнорируется, используется статическое значение 0.45
@@ -413,200 +441,204 @@ async def inference(
         Результаты детекции
     """
     # Статические значения параметров детекции
-    STATIC_CONF = 0.25
+    STATIC_CONF = 0.20
     STATIC_IOU = 0.45
-    STATIC_AGNOSTIC_NMS = True
+    STATIC_AGNOSTIC_NMS = False
     STATIC_MAX_DET = 300
     
-    try:
-        file_bytes = await file.read()
-        
-        # Проверка на пустой файл
-        if not file_bytes or len(file_bytes) == 0:
-            logger.error(f"Empty file received: {file.filename}")
-            raise HTTPException(status_code=400, detail="File is empty or could not be read")
-        
-        # Проверка максимального размера файла (100 MB)
-        MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
-        if len(file_bytes) > MAX_FILE_SIZE:
-            logger.error(f"File too large: {len(file_bytes)} bytes (max: {MAX_FILE_SIZE})")
-            raise HTTPException(status_code=400, detail=f"File too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.0f} MB")
-        
-        content_type = file.content_type or ""
-        
-        logger.info(f"Received file: {file.filename}, size: {len(file_bytes)} bytes, content_type: {content_type}")
-        
-        # Обработка PDF
-        if content_type == "application/pdf" or file.filename.lower().endswith('.pdf'):
-            if not PDF_SUPPORT:
-                raise HTTPException(
-                    status_code=400,
-                    detail="PDF support not available. Install pdf2image or PyMuPDF"
-                )
+    # Ограничение параллельных запросов
+    async with REQUEST_SEMAPHORE:
+        try:
+            file_bytes = await file.read()
             
-            # Конвертация PDF в изображения
-            try:
-                logger.info(f"Converting PDF to images, size: {len(file_bytes)} bytes")
-                pdf_images = pdf_to_images(file_bytes)
-                logger.info(f"PDF converted to {len(pdf_images)} images")
-            except ValueError as e:
-                logger.error(f"PDF conversion error: {e}")
-                raise HTTPException(status_code=400, detail=str(e))
-            except Exception as e:
-                logger.error(f"Unexpected PDF conversion error: {e}")
-                import traceback
-                logger.error(f"Traceback: {traceback.format_exc()}")
-                raise HTTPException(status_code=400, detail=f"Error converting PDF: {str(e)}")
+            # Проверка на пустой файл
+            if not file_bytes or len(file_bytes) == 0:
+                logger.error(f"Empty file received: {file.filename}")
+                raise HTTPException(status_code=400, detail="File is empty or could not be read")
             
-            if len(pdf_images) == 0:
-                raise HTTPException(status_code=400, detail="PDF is empty or could not be converted")
+            # Проверка максимального размера файла (100 MB)
+            MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
+            if len(file_bytes) > MAX_FILE_SIZE:
+                logger.error(f"File too large: {len(file_bytes)} bytes (max: {MAX_FILE_SIZE})")
+                raise HTTPException(status_code=400, detail=f"File too large. Maximum size: {MAX_FILE_SIZE / (1024*1024):.0f} MB")
             
-            total_pages = len(pdf_images)
-            total_inference_time = 0.0
-            all_detections = []
-            pages_results = []
+            content_type = file.content_type or ""
             
-            # Обработка всех страниц или выбранной
-            pages_to_process = []
-            if pdf_page >= 0 and pdf_page < total_pages:
-                # Обработать конкретную страницу
-                pages_to_process = [(pdf_page, pdf_images[pdf_page])]
-            else:
-                # Обработать все страницы
-                pages_to_process = [(i, img) for i, img in enumerate(pdf_images)]
+            logger.info(f"Received file: {file.filename}, size: {len(file_bytes)} bytes, content_type: {content_type}")
             
-            # Обработка каждой страницы
-            for page_num, pil_image in pages_to_process:
-                # Конвертация PIL Image в bytes
-                img_byte_arr = io.BytesIO()
-                pil_image.save(img_byte_arr, format='PNG')
-                image_bytes = img_byte_arr.getvalue()
+            # Обработка PDF
+            if content_type == "application/pdf" or file.filename.lower().endswith('.pdf'):
+                if not PDF_SUPPORT:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="PDF support not available. Install pdf2image or PyMuPDF"
+                    )
                 
-                # Обработка страницы
-                page_result = process_image(
+                # Конвертация PDF в изображения
+                try:
+                    logger.info(f"Converting PDF to images, size: {len(file_bytes)} bytes")
+                    pdf_images = pdf_to_images(file_bytes)
+                    logger.info(f"PDF converted to {len(pdf_images)} images")
+                except ValueError as e:
+                    logger.error(f"PDF conversion error: {e}")
+                    raise HTTPException(status_code=400, detail=str(e))
+                except Exception as e:
+                    logger.error(f"Unexpected PDF conversion error: {e}")
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
+                    raise HTTPException(status_code=400, detail=f"Error converting PDF: {str(e)}")
+                
+                if len(pdf_images) == 0:
+                    raise HTTPException(status_code=400, detail="PDF is empty or could not be converted")
+                
+                total_pages = len(pdf_images)
+                total_inference_time = 0.0
+                all_detections = []
+                pages_results = []
+                
+                # Обработка всех страниц или выбранной
+                pages_to_process = []
+                if pdf_page >= 0 and pdf_page < total_pages:
+                    # Обработать конкретную страницу
+                    pages_to_process = [(pdf_page, pdf_images[pdf_page])]
+                else:
+                    # Обработать все страницы
+                    pages_to_process = [(i, img) for i, img in enumerate(pdf_images)]
+                
+                # Обработка каждой страницы
+                for page_num, pil_image in pages_to_process:
+                    # Конвертация PIL Image в bytes
+                    img_byte_arr = io.BytesIO()
+                    pil_image.save(img_byte_arr, format='PNG')
+                    image_bytes = img_byte_arr.getvalue()
+                    
+                    # Обработка страницы
+                    page_result = process_image(
+                        image_bytes,
+                        conf_threshold=STATIC_CONF,
+                        iou_threshold=STATIC_IOU,
+                        agnostic_nms=STATIC_AGNOSTIC_NMS,
+                        max_det=STATIC_MAX_DET
+                    )
+                    
+                    # Рисование boxes
+                    try:
+                        annotated_img = draw_boxes(image_bytes, page_result["detections"])
+                    except Exception as e:
+                        logger.warning(f"Error drawing boxes for page {page_num}: {e}")
+                        # Создаем пустое изображение или используем оригинал
+                        annotated_img = None
+                    
+                    # Сохранение результатов страницы
+                    pages_results.append({
+                        "page_number": page_num,
+                        "detections": page_result["detections"],
+                        "num_detections": page_result["num_detections"],
+                        "image_size": page_result["image_size"],
+                        "annotated_image": annotated_img
+                    })
+                    
+                    all_detections.extend(page_result["detections"])
+                    total_inference_time += page_result["inference_time"]
+                
+                # Результат для первой страницы (для обратной совместимости)
+                first_page_result = pages_results[0] if pages_results else None
+                
+                result = {
+                    "detections": first_page_result["detections"] if first_page_result else [],
+                    "num_detections": sum(p["num_detections"] for p in pages_results),
+                    "image_size": first_page_result["image_size"] if first_page_result else {"width": 0, "height": 0},
+                    "inference_time": total_inference_time,
+                    "pdf_info": {
+                        "total_pages": total_pages,
+                        "processed_pages": len(pages_to_process),
+                        "is_pdf": True
+                    },
+                    "pages": pages_results,
+                    "annotated_image": first_page_result["annotated_image"] if first_page_result else None
+                }
+                
+            # Обработка изображения
+            elif content_type.startswith("image/"):
+                image_bytes = file_bytes
+                
+                # Обработка
+                result = process_image(
                     image_bytes,
                     conf_threshold=STATIC_CONF,
                     iou_threshold=STATIC_IOU,
                     agnostic_nms=STATIC_AGNOSTIC_NMS,
                     max_det=STATIC_MAX_DET
                 )
-                
-                # Рисование boxes
+                result["pdf_info"] = {"is_pdf": False}
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="File must be an image (jpg, png, etc.) or PDF"
+                )
+            
+            # Рисование boxes если нужно
+            annotated_image = None
+            if draw_boxes_flag:
                 try:
-                    annotated_img = draw_boxes(image_bytes, page_result["detections"])
+                    annotated_image = draw_boxes(image_bytes, result["detections"])
                 except Exception as e:
-                    logger.warning(f"Error drawing boxes for page {page_num}: {e}")
-                    # Создаем пустое изображение или используем оригинал
-                    annotated_img = None
-                
-                # Сохранение результатов страницы
-                pages_results.append({
-                    "page_number": page_num,
-                    "detections": page_result["detections"],
-                    "num_detections": page_result["num_detections"],
-                    "image_size": page_result["image_size"],
-                    "annotated_image": annotated_img
-                })
-                
-                all_detections.extend(page_result["detections"])
-                total_inference_time += page_result["inference_time"]
+                    logger.warning(f"Error drawing boxes: {e}")
+                    # Продолжаем без аннотированного изображения
+                    annotated_image = None
             
-            # Результат для первой страницы (для обратной совместимости)
-            first_page_result = pages_results[0] if pages_results else None
-            
-            result = {
-                "detections": first_page_result["detections"] if first_page_result else [],
-                "num_detections": sum(p["num_detections"] for p in pages_results),
-                "image_size": first_page_result["image_size"] if first_page_result else {"width": 0, "height": 0},
-                "inference_time": total_inference_time,
-                "pdf_info": {
-                    "total_pages": total_pages,
-                    "processed_pages": len(pages_to_process),
-                    "is_pdf": True
-                },
-                "pages": pages_results,
-                "annotated_image": first_page_result["annotated_image"] if first_page_result else None
-            }
-            
-        # Обработка изображения
-        elif content_type.startswith("image/"):
-            image_bytes = file_bytes
-            
-            # Обработка
-            result = process_image(
-                image_bytes,
-                conf_threshold=STATIC_CONF,
-                iou_threshold=STATIC_IOU,
-                agnostic_nms=STATIC_AGNOSTIC_NMS,
-                max_det=STATIC_MAX_DET
-            )
-            result["pdf_info"] = {"is_pdf": False}
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail="File must be an image (jpg, png, etc.) or PDF"
-            )
-        
-        # Рисование boxes если нужно
-        annotated_image = None
-        if draw_boxes_flag:
+            # Подготовка ответа
             try:
-                annotated_image = draw_boxes(image_bytes, result["detections"])
+                response_data = {
+                    "success": True,
+                    "detections": [Detection(**d) for d in result["detections"]],
+                    "num_detections": result["num_detections"],
+                    "image_size": result["image_size"],
+                    "inference_time": result["inference_time"],
+                    "model_info": {
+                        "model_path": MODEL_PATH,
+                        "device": device,
+                        "classes": CLASS_NAMES
+                    },
+                    "annotated_image": result.get("annotated_image") or annotated_image,
+                    "pdf_info": result.get("pdf_info", {"is_pdf": False}),
+                    "pages": None
+                }
+                
+                # Добавляем результаты всех страниц для PDF
+                if result.get("pdf_info", {}).get("is_pdf") and result.get("pages"):
+                    response_data["pages"] = [
+                        PageResult(
+                            page_number=p["page_number"],
+                            detections=[Detection(**d) for d in p["detections"]],
+                            num_detections=p["num_detections"],
+                            image_size=p["image_size"],
+                            annotated_image=p["annotated_image"]
+                        )
+                        for p in result["pages"]
+                    ]
+                
+                logger.info(f"Response prepared: {result['num_detections']} detections, {len(response_data.get('pages', []) or [])} pages")
+                return InferenceResponse(**response_data)
             except Exception as e:
-                logger.warning(f"Error drawing boxes: {e}")
-                # Продолжаем без аннотированного изображения
-                annotated_image = None
+                import traceback
+                logger.error(f"Error preparing response: {e}")
+                logger.error(f"Traceback: {traceback.format_exc()}")
+                raise HTTPException(status_code=500, detail=f"Error preparing response: {str(e)}")
         
-        # Подготовка ответа
-        try:
-            response_data = {
-                "success": True,
-                "detections": [Detection(**d) for d in result["detections"]],
-                "num_detections": result["num_detections"],
-                "image_size": result["image_size"],
-                "inference_time": result["inference_time"],
-                "model_info": {
-                    "model_path": MODEL_PATH,
-                    "device": device,
-                    "classes": CLASS_NAMES
-                },
-                "annotated_image": result.get("annotated_image") or annotated_image,
-                "pdf_info": result.get("pdf_info", {"is_pdf": False}),
-                "pages": None
-            }
-            
-            # Добавляем результаты всех страниц для PDF
-            if result.get("pdf_info", {}).get("is_pdf") and result.get("pages"):
-                response_data["pages"] = [
-                    PageResult(
-                        page_number=p["page_number"],
-                        detections=[Detection(**d) for d in p["detections"]],
-                        num_detections=p["num_detections"],
-                        image_size=p["image_size"],
-                        annotated_image=p["annotated_image"]
-                    )
-                    for p in result["pages"]
-                ]
-            
-            logger.info(f"Response prepared: {result['num_detections']} detections, {len(response_data.get('pages', []) or [])} pages")
-            return InferenceResponse(**response_data)
+        except HTTPException:
+            raise
         except Exception as e:
             import traceback
-            logger.error(f"Error preparing response: {e}")
+            logger.error(f"Inference error: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
-            raise HTTPException(status_code=500, detail=f"Error preparing response: {str(e)}")
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        import traceback
-        logger.error(f"Inference error: {e}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 @app.post("/api/batch-inference")
+@limiter.limit("10/minute")  # Rate limit: 10 батч-запросов в минуту
 async def batch_inference(
+    request: Request,
     files: List[UploadFile] = File(...),
     conf: float = Form(0.25),
     iou: float = Form(0.45),
@@ -622,39 +654,74 @@ async def batch_inference(
     STATIC_AGNOSTIC_NMS = True
     STATIC_MAX_DET = 300
     
-    results = []
-    
-    for file in files:
-        try:
-            if not file.content_type.startswith("image/"):
-                continue
-            
-            image_bytes = await file.read()
-            result = process_image(
-                image_bytes,
-                conf_threshold=STATIC_CONF,
-                iou_threshold=STATIC_IOU,
-                agnostic_nms=STATIC_AGNOSTIC_NMS,
-                max_det=STATIC_MAX_DET
-            )
-            
-            results.append({
-                "filename": file.filename,
-                "success": True,
-                **result
-            })
+    # Ограничение параллельных запросов
+    async with REQUEST_SEMAPHORE:
+        results = []
         
-        except Exception as e:
-            results.append({
-                "filename": file.filename,
-                "success": False,
-                "error": str(e)
-            })
-    
-    return {"results": results}
+        # Ограничение количества файлов в батче
+        MAX_BATCH_SIZE = int(os.getenv("MAX_BATCH_SIZE", "20"))
+        if len(files) > MAX_BATCH_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Too many files. Maximum batch size: {MAX_BATCH_SIZE}"
+            )
+        
+        for file in files:
+            try:
+                if not file.content_type.startswith("image/"):
+                    continue
+                
+                image_bytes = await file.read()
+                result = process_image(
+                    image_bytes,
+                    conf_threshold=STATIC_CONF,
+                    iou_threshold=STATIC_IOU,
+                    agnostic_nms=STATIC_AGNOSTIC_NMS,
+                    max_det=STATIC_MAX_DET
+                )
+                
+                results.append({
+                    "filename": file.filename,
+                    "success": True,
+                    **result
+                })
+            
+            except Exception as e:
+                results.append({
+                    "filename": file.filename,
+                    "success": False,
+                    "error": str(e)
+                })
+        
+        return {"results": results}
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    
+    # Получение настроек из переменных окружения
+    workers = int(os.getenv("UVICORN_WORKERS", "4"))  # Количество воркеров
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", "8000"))
+    
+    # Запуск с несколькими воркерами для лучшей производительности
+    if workers > 1:
+        # Используем uvicorn с workers (требует запуск через командную строку)
+        logger.info(f"Starting uvicorn with {workers} workers")
+        uvicorn.run(
+            "main:app",
+            host=host,
+            port=port,
+            workers=workers,
+            log_level="info"
+        )
+    else:
+        # Одиночный воркер (для разработки)
+        logger.info("Starting uvicorn with single worker")
+        uvicorn.run(
+            app,
+            host=host,
+            port=port,
+            log_level="info"
+        )
 

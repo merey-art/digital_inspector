@@ -1,0 +1,23 @@
+# Пример файла docker-compose.override.yml
+# Скопируйте этот файл в docker-compose.override.yml и настройте под свои нужды
+# Файл docker-compose.override.yml автоматически используется docker-compose
+
+version: '3.8'
+
+services:
+  digital-inspector-cpu:
+    # Изменить порт
+    ports:
+      - "8080:8000"
+    
+    # Добавить переменные окружения
+    environment:
+      - MODEL_PATH=/app/training_results/run_default_15ep2/weights/best.pt
+      - LOG_LEVEL=INFO
+    
+    # Монтировать дополнительные директории
+    volumes:
+      - ./training_results:/app/training_results:ro
+      - ./frontend:/app/frontend:ro
+      - ./logs:/app/logs
+

@@ -18,7 +18,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu121 && \
-    pip install --no-cache-dir fastapi uvicorn[standard] python-multipart pydantic PyMuPDF && \
+    pip install --no-cache-dir fastapi uvicorn[standard] python-multipart pydantic PyMuPDF slowapi && \
     pip install --no-cache-dir -r requirements.txt
 # Примечание: Для CPU версии замените cu121 на cpu в строке выше
 
@@ -37,6 +37,9 @@ EXPOSE 8000 8080
 # Переменные окружения
 ENV MODEL_PATH=/app/training_results/run_default_15ep2/weights/best.pt
 ENV PYTHONUNBUFFERED=1
+ENV UVICORN_WORKERS=4
+ENV MAX_CONCURRENT_REQUESTS=10
+ENV MAX_BATCH_SIZE=20
 
 # Запуск приложения
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

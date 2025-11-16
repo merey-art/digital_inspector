@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  # CPU версия (по умолчанию)
+  digital-inspector-cpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: cpu
+    container_name: digital-inspector-cpu
+    ports:
+      - "8000:8000"
+    volumes:
+      # Монтируем модель (если она находится локально)
+      - ./training_results:/app/training_results:ro
+      # Монтируем frontend для разработки (опционально)
+      - ./frontend:/app/frontend:ro
+    environment:
+      - MODEL_PATH=/app/training_results/run_default_15ep2/weights/best.pt
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # CUDA версия (для GPU)
+  digital-inspector-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: cuda
+    container_name: digital-inspector-gpu
+    ports:
+      - "8000:8000"
+    volumes:
+      # Монтируем модель (если она находится локально)
+      - ./training_results:/app/training_results:ro
+      # Монтируем frontend для разработки (опционально)
+      - ./frontend:/app/frontend:ro
+    environment:
+      - MODEL_PATH=/app/training_results/run_default_15ep2/weights/best.pt
+      - PYTHONUNBUFFERED=1
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+

@@ -10,9 +10,19 @@ cleanup() {
 
 trap cleanup SIGTERM SIGINT
 
-# Запуск Backend
+# Запуск Backend с несколькими воркерами
 cd /app/backend
-python main.py &
+# Используем переменные окружения для настройки
+UVICORN_WORKERS=${UVICORN_WORKERS:-4}
+MAX_CONCURRENT_REQUESTS=${MAX_CONCURRENT_REQUESTS:-10}
+MAX_BATCH_SIZE=${MAX_BATCH_SIZE:-20}
+
+export UVICORN_WORKERS
+export MAX_CONCURRENT_REQUESTS
+export MAX_BATCH_SIZE
+
+# Запуск с uvicorn напрямую для поддержки workers
+uvicorn main:app --host 0.0.0.0 --port 8000 --workers $UVICORN_WORKERS &
 BACKEND_PID=$!
 
 # Небольшая задержка для запуска backend
